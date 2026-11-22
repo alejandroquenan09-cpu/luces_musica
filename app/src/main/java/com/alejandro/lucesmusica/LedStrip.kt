@@ -1,3 +1,66 @@
+package com.alejandro.lucesmusica
+
+import android.annotation.SuppressLint
+import android.bluetooth.*
+import android.bluetooth.le.*
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import java.util.UUID
+
+@SuppressLint("MissingPermission")
+class LedStrip(private val context: Context, private val onStatus: (String) -> Unit) {
+
+    private val serviceUuid = UUID.fromString("0000fff0-0000-1000-8000-00805f9b34fb")
+    private val charUuid = UUID.fromString("0000fff3-0000-1000-8000-00805f9b34fb")
+
+    private val adapter: BluetoothAdapter? =
+        (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+    private val main = Handler(Looper.getMainLooper())
+
+    private var gatt: BluetoothGatt? = null
+    private var characteristic: BluetoothGattCharacteristic? = null
+    private var scanning = false
+    private var lastWrite = 0L
+
+    val isReady: Boolean get() = characteristic != null
+
+    fun connect() {
+        val scanner = adapter?.bluetoothLeScanner ?: run {
+            onStatus("Bluetooth apagado")
+            return
+        }
+        if (scanning) return
+        scanning = true
+        onStatus("Buscando luces...")
+        scanner.startScan(scanCallback)
+        main.postDelayed({
+            if (scanning) {
+                scanning = false
+                scanner.stopScan(scanCallback)
+                if (gatt == null) onStatus("No encontré luces. Cierra Lotus Lantern y reintenta")
+            }
+        }, 15000)
+    }
+
+    private val scanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            val name = result.device.name ?: return
+            val ok = name.startsWith("ELK-") || name.startsWith("ELK~") ||
+                name.startsWith("LED LIGHT STRIP") || name.startsWith("XSL-") ||
+                name.startsWith("BLEDOM")
+            if (ok && scanning) {
+                scanning = false
+                adapter?.bluetoothLeScanner?.stopScan(this)
+                onStatus("Conectando a $name...")
+                gatt = result.device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            }
+        }
+    }
+
+    private val gattCallback = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
                 g.discoverServices()
             } else {
                 characteristic = null
